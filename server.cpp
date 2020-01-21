@@ -95,81 +95,25 @@ class HTTPClient {
     }
 
     void giveResponse() {
-        //response(cliSock, method, methodLen, path, pathLen, version);
+        // response(cliSock, method, methodLen, path, pathLen, version);
         std::ostringstream resp;
 
         int status = 200;
-
-        char *pathBuf = new char[pathLen + 1];
-        memcpy(pathBuf , path, pathLen);
-        pathBuf[pathLen] = '\0';
-        std::unique_ptr<char> realPath(pathBuf);
-
-        int filefd;
-        guard(filefd = open(realPath.get(), O_RDONLY), "open Error");
-        std::cerr << "realPath " << pathBuf << " filefd " << filefd << std::endl;
-
         if (version != 0) {
             status = 505;
-
-            resp << "HTTP/1.0 " << status << " \n";
+            resp << "HTTP/1.0" << status << "\n";
             resp << "Content-length: " << 0 << " \n";
             resp << "Content-Type: text/html\n";
             resp << "\n";
-            goto RESP;
+
+            sendStr(resp.str());
+            return;
         }
 
-        if (filefd < 0) {
-            status = 404;
-
-            resp << "HTTP/1.0 " << status << " not found"
-                 << "\n";
-            resp << "Content-length: " << 0 << " \n";
-            resp << "Content-Type: text/html\n";
-            resp << "\n";
-            goto RESP;
-        }
-
-        struct stat fileStat;
-        guard(fstat(filefd, &fileStat), "fstat error");
-
-        resp << "HTTP/1.0 " << status << "\n";
-        resp << "Content-length: " << size_t(fileStat.st_size) << " \n";
-        resp << "Content-Type: text/html\n";
-        resp << "\n";
-        goto RESP;
-
-    RESP:
-        std::flush(resp);
-        // std::cout << "response " << resp.str() << std::endl;
-        // std::cout << "response " << resp.str().c_str() << std::endl;
-
-        int sendCode;
-        while (guard(sendCode = send(cliSock, resp.str().c_str(),
-                                     strlen(resp.str().c_str()), MSG_NOSIGNAL),
-                     "senderror") == -1 &&
-               errno == EINTR) {
-            continue;
-        }
-
-        if (sendCode == -1) {
-            std::cout << "send message error " << strerror(errno) << std::endl;
-        } else {
-            std::cout << "response " << resp.str().c_str() << std::endl;
-        }
-
-        if (filefd) {
-            off_t fileOff = 0;
-            size_t byteSent = 0, totalLeft = (fileStat.st_size);
-            while (totalLeft > 0) {
-                guard(byteSent = sendfile(cliSock, filefd, &fileOff, 2e9),
-                      "sendfile");  // possible errors
-                if (byteSent == -1) break;
-                totalLeft -= byteSent;
-            }
-        }
-
-        close(filefd);
+        std::string met(method, methodLen);
+        if (met == "GET") {
+            httpGET();
+        } 
     }
 
     HTTPClient(HTTPClient &&) = default;
@@ -177,6 +121,76 @@ class HTTPClient {
     ~HTTPClient() { close(cliSock); }
 
    private:
+    void httpGET() {
+        struct stat fileStat;
+        std::ostringstream resp;
+
+        int status = 200;
+
+
+        char *pathBuf = new char[pathLen + 1];
+        memcpy(pathBuf, path, pathLen);
+        pathBuf[pathLen] = '\0';
+        std::unique_ptr<char> realPath(pathBuf);
+
+        int filefd;
+        guard(filefd = open(realPath.get(), O_RDONLY), "open Error");
+        std::cerr << "realPath " << pathBuf << " filefd " << filefd
+                  << std::endl;
+
+        if (filefd < 0) {
+            status = 404;
+
+            resp << "HTTP/1.0 " << status << " not found"
+                 << "\n";
+            resp << "Content-length: " << 0 << " \n";
+        }
+        else {
+            resp << "HTTP/1.0 " << status << "\n";
+            guard(fstat(filefd, &fileStat), "fstat error");
+            resp << "Content-length: " << size_t(fileStat.st_size) << " \n";
+        }
+
+        resp << "Content-Type: text/html\n";
+        resp << "\n";
+
+        sendStr(resp.str());
+        sendFile(filefd, fileStat);
+
+        close(filefd);
+    }
+
+    void httpPOST();
+
+    int sendStr(std::string msg) {
+        int sendCode;
+        while (guard(sendCode = send(cliSock, msg.c_str(),
+                                     strlen(msg.c_str()), MSG_NOSIGNAL),
+                     "senderror") == -1 &&
+               errno == EINTR) {
+            continue;
+        }
+
+        return sendCode;
+    }
+
+    int sendFile(int filefd, const struct stat& fileStat) {
+        if (filefd >= 0) {
+            off_t fileOff = 0;
+            size_t byteSent = 0, totalLeft = (fileStat.st_size);
+            while (totalLeft > 0) {
+                guard(byteSent = sendfile(cliSock, filefd, &fileOff, 2e9),
+                      "sendfile");  // possible errors
+                if (byteSent == -1) {
+                    return -1;
+                }
+                totalLeft -= byteSent;
+            }
+        }
+
+        return fileStat.st_size;
+    }
+
     int cliSock;
 
     std::unique_ptr<sockaddr_in> clientAdr;
@@ -219,13 +233,13 @@ class NetworkManager {
     }
 
     HTTPClient waitClient() {
-        auto clientAdr = std::make_unique<sockaddr_in>();
-        socklen_t clientAdrLen;
-        int cliSock;
-
         while (true) {
+            auto clientAdr = std::make_unique<sockaddr_in>();
+            socklen_t clientAdrLen;
+            int cliSock;
+
             guard(cliSock = accept(
-                      mSock, reinterpret_cast<sockaddr *>(clientAdr.get()),
+                      mSock, (sockaddr*)(clientAdr.get()),
                       &clientAdrLen),
                   "acceptError");
 
