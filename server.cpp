@@ -1,8 +1,5 @@
 #include "picohttp/picohttpparser.h"  //!!!!!11
 
-#include <asm-generic/errno-base.h>
-#include <bits/getopt_core.h>
-#include <linux/falloc.h>
 #include <netinet/in.h>
 #include <iostream>
 #include <istream>
