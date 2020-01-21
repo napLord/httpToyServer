@@ -8,6 +8,7 @@
 #include <sstream>
 #include <vector>
 #include <algorithm>
+#include <thread>
 
 #include <arpa/inet.h>
 #include <errno.h>
@@ -263,7 +264,13 @@ class NetworkManager {
     addrinfo *myAdr;
 };
 
+void testfunc() {
+    sleep(8);
+}
+
 int main(int argc, char** argv) {
+    std::thread thr(testfunc);
+
     char *h = nullptr, *p = nullptr, *d = nullptr;
     opterr = 0;
     int rez = 0;
@@ -284,6 +291,7 @@ int main(int argc, char** argv) {
 
     NetworkManager manager(h, p); //check h and p!!
 
+    thr.join();
     while (true) {
         auto client = manager.waitClient();
 
