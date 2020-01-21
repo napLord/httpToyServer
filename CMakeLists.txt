@@ -5,8 +5,8 @@ project(httpToyServer)
 
 include_directories(picohttp)
 
-add_executable(server server.cpp)
+add_executable(final server.cpp)
 
 add_subdirectory(picohttp)
 
-target_link_libraries(server picohttp)
+target_link_libraries(final picohttp)
