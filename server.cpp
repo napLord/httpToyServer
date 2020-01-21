@@ -1,6 +1,7 @@
 #include "picohttp/picohttpparser.h"  //!!!!!11
 
 #include <asm-generic/errno-base.h>
+#include <bits/getopt_core.h>
 #include <linux/falloc.h>
 #include <netinet/in.h>
 #include <iostream>
@@ -9,6 +10,7 @@
 #include <ostream>
 #include <sstream>
 #include <vector>
+#include <algorithm>
 
 #include <arpa/inet.h>
 #include <errno.h>
@@ -33,12 +35,12 @@ inline int guard(int n, const char *msg) {
 
 class HTTPClient {
    public:
-    HTTPClient(int clientSocket, std::unique_ptr<sockaddr_in> clientAdress,
+    HTTPClient(int clientSocket, sockaddr_in clientAdress,
                socklen_t adressLength)
         : cliSock(clientSocket),
-          clientAdr(std::move(clientAdress)),
+          clientAdr(clientAdress),
           clientAdrLen(adressLength) {
-        std::cout << "got connection from " << inet_ntoa(clientAdr->sin_addr)
+        std::cout << "got connection from " << inet_ntoa(clientAdr.sin_addr)
                   << std::endl;
     }
 
@@ -131,6 +133,7 @@ class HTTPClient {
         char *pathBuf = new char[pathLen + 1];
         memcpy(pathBuf, path, pathLen);
         pathBuf[pathLen] = '\0';
+        std::replace(pathBuf, pathBuf + pathLen + 1, '?', '\0');
         std::unique_ptr<char> realPath(pathBuf);
 
         int filefd;
@@ -193,7 +196,7 @@ class HTTPClient {
 
     int cliSock;
 
-    std::unique_ptr<sockaddr_in> clientAdr;
+    sockaddr_in clientAdr;
     socklen_t clientAdrLen;
 
     char buff[4096];
@@ -205,15 +208,16 @@ class HTTPClient {
 
 class NetworkManager {
    public:
-    NetworkManager() {
+    NetworkManager(const char* node, const char* port) {
         addrinfo hints;
 
         memset(&hints, 0, sizeof(hints));
         hints.ai_family = AF_INET;
         hints.ai_socktype = SOCK_STREAM;
-        hints.ai_flags = AI_PASSIVE;
+        //hints.ai_flags = AI_PASSIVE;
 
-        guard(getaddrinfo(nullptr, PORT, &hints, &myAdr),
+        std::cerr << node << "   " << port << std::endl;
+        guard(getaddrinfo(node, port, &hints, &myAdr),
               "getaddrError");  // leak?
 
         guard(mSock = socket(myAdr->ai_family, myAdr->ai_socktype,
@@ -234,17 +238,18 @@ class NetworkManager {
 
     HTTPClient waitClient() {
         while (true) {
-            auto clientAdr = std::make_unique<sockaddr_in>();
-            socklen_t clientAdrLen;
+            sockaddr_in clientAdr;
+            socklen_t clientAdrLen = sizeof(clientAdr);
             int cliSock;
 
             guard(cliSock = accept(
-                      mSock, (sockaddr*)(clientAdr.get()),
+                      mSock, (sockaddr*)(&clientAdr),
                       &clientAdrLen),
                   "acceptError");
 
             if (cliSock > 0) {
-                return HTTPClient(cliSock, std::move(clientAdr), clientAdrLen);
+                guard(getpeername(cliSock, (sockaddr*)&clientAdr, &clientAdrLen), "getpeername");
+                return HTTPClient(cliSock, clientAdr, clientAdrLen);
             } else {
                 continue;
             }
@@ -261,15 +266,34 @@ class NetworkManager {
     addrinfo *myAdr;
 };
 
-int main() {
-    chroot(".");
-    NetworkManager manager;
+int main(int argc, char** argv) {
+    char *h = nullptr, *p = nullptr, *d = nullptr;
+    opterr = 0;
+    int rez = 0;
+    while ((rez = getopt(argc, argv, "p:h:d:")) != -1) {
+        switch(rez) {
+            case 'h': h = optarg; break;
+            case 'p': p = optarg; break;
+            case 'd': d = optarg; break;
+        }
+    }
+    if (h == nullptr || p == nullptr || d == nullptr) {
+        std::cout << "usage: server -h <ip> -p <port> -d <directory>\n";
+        exit(1);
+    }
+
+    chroot(d);
+    daemon(1, 0);
+
+    NetworkManager manager(h, p); //check h and p!!
 
     while (true) {
         auto client = manager.waitClient();
 
-        client.getRequest();
-        client.giveResponse();
+        //if (!fork()) {
+            client.getRequest();
+            client.giveResponse();
+        //}
     }
 
     return 0;
