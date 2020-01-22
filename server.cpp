@@ -299,11 +299,11 @@ int main(int argc, char** argv) {
     while (true) {
         auto client = manager.waitClient();
 
-        if (!fork()) {
+        //if (!fork()) {
             client.getRequest();
             client.giveResponse();
-            return 0;
-        }
+            //return 0;
+        //}
     }
 
     return 0;
