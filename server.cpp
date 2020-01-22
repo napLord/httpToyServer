@@ -1,16 +1,17 @@
-#include "picohttp/picohttpparser.h"  //!!!!!11
+#include "picohttpparser.h"
 
-#include <csignal>
 #include <netinet/in.h>
+#include <sys/wait.h>
+#include <algorithm>
+#include <csignal>
 #include <iostream>
 #include <istream>
 #include <memory>
 #include <ostream>
 #include <sstream>
-#include <sys/wait.h>
-#include <vector>
-#include <algorithm>
+#include <string_view>
 #include <thread>
+#include <vector>
 
 #include <arpa/inet.h>
 #include <errno.h>
@@ -41,11 +42,10 @@ class HTTPClient {
         : cliSock(clientSocket),
           clientAdr(clientAdress),
           clientAdrLen(adressLength) {
-        //std::cout << "got connection from " << inet_ntoa(clientAdr.sin_addr)
-                  //<< std::endl;
+         std::cout << "got connection from " << inet_ntoa(clientAdr.sin_addr) << std::endl;
     }
 
-    void getRequest() {
+    int getRequest() {
         while (true) {
             int len;
             while ((len = recv(cliSock, buff + ofs, sizeof(buff) - ofs,
@@ -55,11 +55,12 @@ class HTTPClient {
             }
 
             if (len == 0) {
-                std::cout << "disconnected" << std::endl;
-                break;
+                std::cout << "cient disconnected" << std::endl;
+                return -1;
             }
             if (len < 0) {
                 std::cout << "recv error " << strerror(errno) << std::endl;
+                return -1;
             }
 
             lastofs = ofs;
@@ -72,9 +73,9 @@ class HTTPClient {
                                                &path, &pathLen, &version,
                                                headers, &headersCnt, lastofs),
                   "phr_parse_req_error");
-            //std::cerr << parseRet << std::endl;
+
             if (parseRet > 0) {
-                break;
+                return ofs - 1;
             }
 
             if (parseRet == -2) {
@@ -82,23 +83,23 @@ class HTTPClient {
             }
 
             if (ofs == sizeof(buff)) {
-                break;
+                std::cerr << "request is too big" << std::endl;
+                return -1;
             }
         }
 
-        //printf("buffer is %s\n", buff);
-        //printf("method is %.*s\n", (int)methodLen, method);
-        //printf("path is %.*s\n", (int)pathLen, path);
-        //printf("HTTP version is 1.%d\n", version);
-        //printf("headers:\n");
-        //for (int i = 0; i != headersCnt; ++i) {
-            //printf("%.*s: %.*s\n", (int)headers[i].name_len, headers[i].name,
-                   //(int)headers[i].value_len, headers[i].value);
+        // printf("buffer is %s\n", buff);
+        // printf("method is %.*s\n", (int)methodLen, method);
+        // printf("path is %.*s\n", (int)pathLen, path);
+        // printf("HTTP version is 1.%d\n", version);
+        // printf("headers:\n");
+        // for (int i = 0; i != headersCnt; ++i) {
+        // printf("%.*s: %.*s\n", (int)headers[i].name_len, headers[i].name,
+        //(int)headers[i].value_len, headers[i].value);
         //}
     }
 
     void giveResponse() {
-        // response(cliSock, method, methodLen, path, pathLen, version);
         std::ostringstream resp;
 
         int status = 200;
@@ -113,15 +114,20 @@ class HTTPClient {
             return;
         }
 
-        std::string met(method, methodLen);
+        // std::string met(method, methodLen);
+        std::string_view met(method, methodLen);
+
         if (met == "GET") {
             httpGET();
-        } 
+        }
     }
 
     HTTPClient(HTTPClient &&) = default;
 
-    ~HTTPClient() { close(cliSock); }
+    ~HTTPClient() {
+        std::cout << "response given" << std::endl;
+        close(cliSock);
+    }
 
    private:
     void httpGET() {
@@ -130,8 +136,9 @@ class HTTPClient {
 
         int status = 200;
 
-
         char *pathBuf = new char[pathLen + 1];
+        if (pathBuf == nullptr) return;
+
         memcpy(pathBuf, path, pathLen);
         pathBuf[pathLen] = '\0';
         std::replace(pathBuf, pathBuf + pathLen + 1, '?', '\0');
@@ -139,20 +146,15 @@ class HTTPClient {
 
         int filefd;
         guard(filefd = open(realPath.get(), O_RDONLY), "open Error");
-        //std::cerr << "realPath " << pathBuf << " filefd " << filefd
-                  //<< std::endl;
 
         guard(fstat(filefd, &fileStat), "fstat error");
-        //std::cout << "isreg " << !S_ISREG(fileStat.st_mode) <<std::endl;
 
         if (filefd < 0 || !S_ISREG(fileStat.st_mode)) {
             status = 404;
 
-            resp << "HTTP/1.0 " << status 
-                 << "\n";
+            resp << "HTTP/1.0 " << status << "\n";
             resp << "Content-length: " << 0 << " \n";
-        }
-        else {
+        } else {
             resp << "HTTP/1.0 " << status << "\n";
             resp << "Content-length: " << size_t(fileStat.st_size) << " \n";
         }
@@ -170,8 +172,8 @@ class HTTPClient {
 
     int sendStr(std::string msg) {
         int sendCode;
-        while (guard(sendCode = send(cliSock, msg.c_str(),
-                                     strlen(msg.c_str()), MSG_NOSIGNAL),
+        while (guard(sendCode = send(cliSock, msg.c_str(), strlen(msg.c_str()),
+                                     MSG_NOSIGNAL),
                      "senderror") == -1 &&
                errno == EINTR) {
             continue;
@@ -180,9 +182,8 @@ class HTTPClient {
         return sendCode;
     }
 
-    int sendFile(int filefd, const struct stat& fileStat) {
-        if (!S_ISREG(fileStat.st_mode))
-            return -1;
+    int sendFile(int filefd, const struct stat &fileStat) {
+        if (!S_ISREG(fileStat.st_mode)) return -1;
         if (filefd >= 0) {
             off_t fileOff = 0;
             size_t byteSent = 0, totalLeft = (fileStat.st_size);
@@ -213,32 +214,28 @@ class HTTPClient {
 
 class NetworkManager {
    public:
-    NetworkManager(const char* node, const char* port) {
+    NetworkManager(const char *node, const char *port) { //check if manager construction's impossible
         addrinfo hints;
 
         memset(&hints, 0, sizeof(hints));
         hints.ai_family = AF_INET;
         hints.ai_socktype = SOCK_STREAM;
-        //hints.ai_flags = AI_PASSIVE;
 
-        //std::cerr << node << "   " << port << std::endl;
-        guard(getaddrinfo(node, port, &hints, &myAdr),
-              "getaddrError");  // leak?
+        guard(getaddrinfo(node, port, &hints, &myAdr), "getaddrError");
 
         guard(mSock = socket(myAdr->ai_family, myAdr->ai_socktype,
                              myAdr->ai_protocol),
               "socketError");
 
         int yes = 1;
-        if (setsockopt(mSock, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(int)) ==
-            -1);
-            //std::cerr << "setsockopt   " << strerror(errno) << std::endl;
+        if (setsockopt(mSock, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(int)) == -1)
+             std::cerr << "setsockopt   " << strerror(errno) << std::endl;
 
         guard(bind(mSock, myAdr->ai_addr, myAdr->ai_addrlen), "bindError");
 
         guard(listen(mSock, BACKLOG), "listenError");
 
-        //std::cout << "listening" << std::endl;
+        std::cout << "listening on " << node << ":" << port << std::endl;
     }
 
     HTTPClient waitClient() {
@@ -247,13 +244,14 @@ class NetworkManager {
             socklen_t clientAdrLen = sizeof(clientAdr);
             int cliSock;
 
-            guard(cliSock = accept(
-                      mSock, (sockaddr*)(&clientAdr),
-                      &clientAdrLen),
+            guard(cliSock =
+                      accept(mSock, (sockaddr *)(&clientAdr), &clientAdrLen),
                   "acceptError");
 
             if (cliSock > 0) {
-                guard(getpeername(cliSock, (sockaddr*)&clientAdr, &clientAdrLen), "getpeername");
+                guard(
+                    getpeername(cliSock, (sockaddr *)&clientAdr, &clientAdrLen),
+                    "getpeername");
                 return HTTPClient(cliSock, clientAdr, clientAdrLen);
             } else {
                 continue;
@@ -262,7 +260,7 @@ class NetworkManager {
     }
 
     ~NetworkManager() {
-        // clean myAdr
+        freeaddrinfo(myAdr);
         close(mSock);
     }
 
@@ -271,52 +269,59 @@ class NetworkManager {
     addrinfo *myAdr;
 };
 
-void testfunc() {
-    sleep(8);
-}
+void testfunc() { sleep(8); }
 
-void killChild(int signal, siginfo_t *info, void* ptr) {
-    if (info->si_code == CLD_EXITED || info->si_code ==  CLD_DUMPED || info->si_code == CLD_KILLED) { 
+void killChildHandler(int signal, siginfo_t *info, void *ptr) {
+    if (info->si_code == CLD_EXITED || info->si_code == CLD_DUMPED ||
+        info->si_code == CLD_KILLED) {
         waitpid(-1, nullptr, 0);
-        //std::cerr << "killed " << std::endl;
+        // std::cerr << "killed " << std::endl;
     }
 }
 
-int main(int argc, char** argv) {
+void setZombieKiller() {
     struct sigaction act;
     act.sa_flags = SA_SIGINFO | SA_RESTART;
-    act.sa_sigaction = &killChild;
+    act.sa_sigaction = &killChildHandler;
     sigaction(SIGCHLD, &act, nullptr);
+}
 
-    std::thread thr(testfunc);
+int main(int argc, char **argv) {
+    setZombieKiller();
 
+    // parse args
     char *h = nullptr, *p = nullptr, *d = nullptr;
     opterr = 0;
     int rez = 0;
     while ((rez = getopt(argc, argv, "p:h:d:")) != -1) {
-        switch(rez) {
-            case 'h': h = optarg; break;
-            case 'p': p = optarg; break;
-            case 'd': d = optarg; break;
+        switch (rez) {
+            case 'h':
+                h = optarg;
+                break;
+            case 'p':
+                p = optarg;
+                break;
+            case 'd':
+                d = optarg;
+                break;
         }
     }
     if (h == nullptr || p == nullptr || d == nullptr) {
-        //std::cout << "usage: server -h <ip> -p <port> -d <directory>\n";
+        std::cerr << "usage: server -h <ip> -p <port> -d <directory>\n";
         exit(1);
     }
 
     chroot(d);
     daemon(1, 0);
 
-    NetworkManager manager(h, p); //check h and p!!
+    NetworkManager manager(h, p);  // check h and p!!
 
-    thr.join();
     while (true) {
         auto client = manager.waitClient();
 
         if (!fork()) {
-            client.getRequest();
-            client.giveResponse();
+            if (client.getRequest() != -1) client.giveResponse();
+
             return 0;
         }
     }
