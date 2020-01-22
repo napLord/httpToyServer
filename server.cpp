@@ -302,6 +302,7 @@ int main(int argc, char** argv) {
         if (!fork()) {
             client.getRequest();
             client.giveResponse();
+            return 0;
         }
     }
 
