@@ -1,6 +1,5 @@
 #include "picohttp/picohttpparser.h"  //!!!!!11
 
-#include <bits/types/siginfo_t.h>
 #include <csignal>
 #include <netinet/in.h>
 #include <iostream>
