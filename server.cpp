@@ -38,8 +38,8 @@ class HTTPClient {
         : cliSock(clientSocket),
           clientAdr(clientAdress),
           clientAdrLen(adressLength) {
-        std::cout << "got connection from " << inet_ntoa(clientAdr.sin_addr)
-                  << std::endl;
+        //std::cout << "got connection from " << inet_ntoa(clientAdr.sin_addr)
+                  //<< std::endl;
     }
 
     void getRequest() {
@@ -69,7 +69,7 @@ class HTTPClient {
                                                &path, &pathLen, &version,
                                                headers, &headersCnt, lastofs),
                   "phr_parse_req_error");
-            std::cerr << parseRet << std::endl;
+            //std::cerr << parseRet << std::endl;
             if (parseRet > 0) {
                 break;
             }
@@ -83,15 +83,15 @@ class HTTPClient {
             }
         }
 
-        printf("buffer is %s\n", buff);
-        printf("method is %.*s\n", (int)methodLen, method);
-        printf("path is %.*s\n", (int)pathLen, path);
-        printf("HTTP version is 1.%d\n", version);
-        printf("headers:\n");
-        for (int i = 0; i != headersCnt; ++i) {
-            printf("%.*s: %.*s\n", (int)headers[i].name_len, headers[i].name,
-                   (int)headers[i].value_len, headers[i].value);
-        }
+        //printf("buffer is %s\n", buff);
+        //printf("method is %.*s\n", (int)methodLen, method);
+        //printf("path is %.*s\n", (int)pathLen, path);
+        //printf("HTTP version is 1.%d\n", version);
+        //printf("headers:\n");
+        //for (int i = 0; i != headersCnt; ++i) {
+            //printf("%.*s: %.*s\n", (int)headers[i].name_len, headers[i].name,
+                   //(int)headers[i].value_len, headers[i].value);
+        //}
     }
 
     void giveResponse() {
@@ -136,16 +136,16 @@ class HTTPClient {
 
         int filefd;
         guard(filefd = open(realPath.get(), O_RDONLY), "open Error");
-        std::cerr << "realPath " << pathBuf << " filefd " << filefd
-                  << std::endl;
+        //std::cerr << "realPath " << pathBuf << " filefd " << filefd
+                  //<< std::endl;
 
         guard(fstat(filefd, &fileStat), "fstat error");
-        std::cout << "isreg " << !S_ISREG(fileStat.st_mode) <<std::endl;
+        //std::cout << "isreg " << !S_ISREG(fileStat.st_mode) <<std::endl;
 
         if (filefd < 0 || !S_ISREG(fileStat.st_mode)) {
             status = 404;
 
-            resp << "HTTP/1.0 " << status << " not found"
+            resp << "HTTP/1.0 " << status 
                  << "\n";
             resp << "Content-length: " << 0 << " \n";
         }
@@ -218,7 +218,7 @@ class NetworkManager {
         hints.ai_socktype = SOCK_STREAM;
         //hints.ai_flags = AI_PASSIVE;
 
-        std::cerr << node << "   " << port << std::endl;
+        //std::cerr << node << "   " << port << std::endl;
         guard(getaddrinfo(node, port, &hints, &myAdr),
               "getaddrError");  // leak?
 
@@ -228,14 +228,14 @@ class NetworkManager {
 
         int yes = 1;
         if (setsockopt(mSock, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(int)) ==
-            -1)
-            std::cerr << "setsockopt   " << strerror(errno) << std::endl;
+            -1);
+            //std::cerr << "setsockopt   " << strerror(errno) << std::endl;
 
         guard(bind(mSock, myAdr->ai_addr, myAdr->ai_addrlen), "bindError");
 
         guard(listen(mSock, BACKLOG), "listenError");
 
-        std::cout << "listening" << std::endl;
+        //std::cout << "listening" << std::endl;
     }
 
     HTTPClient waitClient() {
@@ -286,7 +286,7 @@ int main(int argc, char** argv) {
         }
     }
     if (h == nullptr || p == nullptr || d == nullptr) {
-        std::cout << "usage: server -h <ip> -p <port> -d <directory>\n";
+        //std::cout << "usage: server -h <ip> -p <port> -d <directory>\n";
         exit(1);
     }
 
