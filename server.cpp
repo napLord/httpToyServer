@@ -1,11 +1,14 @@
 #include "picohttp/picohttpparser.h"  //!!!!!11
 
+#include <bits/types/siginfo_t.h>
+#include <csignal>
 #include <netinet/in.h>
 #include <iostream>
 #include <istream>
 #include <memory>
 #include <ostream>
 #include <sstream>
+#include <sys/wait.h>
 #include <vector>
 #include <algorithm>
 #include <thread>
@@ -21,6 +24,7 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
+#include <wait.h>
 
 #define PORT "80"
 #define BACKLOG 32
@@ -272,7 +276,19 @@ void testfunc() {
     sleep(8);
 }
 
+void killChild(int signal, siginfo_t *info, void* ptr) {
+    if (info->si_code == CLD_EXITED || info->si_code ==  CLD_DUMPED || info->si_code == CLD_KILLED) { 
+        waitpid(-1, nullptr, 0);
+        //std::cerr << "killed " << std::endl;
+    }
+}
+
 int main(int argc, char** argv) {
+    struct sigaction act;
+    act.sa_flags = SA_SIGINFO | SA_RESTART;
+    act.sa_sigaction = &killChild;
+    sigaction(SIGCHLD, &act, nullptr);
+
     std::thread thr(testfunc);
 
     char *h = nullptr, *p = nullptr, *d = nullptr;
@@ -299,11 +315,11 @@ int main(int argc, char** argv) {
     while (true) {
         auto client = manager.waitClient();
 
-        //if (!fork()) {
+        if (!fork()) {
             client.getRequest();
             client.giveResponse();
-            //return 0;
-        //}
+            return 0;
+        }
     }
 
     return 0;
