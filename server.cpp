@@ -139,7 +139,10 @@ class HTTPClient {
         std::cerr << "realPath " << pathBuf << " filefd " << filefd
                   << std::endl;
 
-        if (filefd < 0) {
+        guard(fstat(filefd, &fileStat), "fstat error");
+        std::cout << "isreg " << !S_ISREG(fileStat.st_mode) <<std::endl;
+
+        if (filefd < 0 || !S_ISREG(fileStat.st_mode)) {
             status = 404;
 
             resp << "HTTP/1.0 " << status << " not found"
@@ -148,7 +151,6 @@ class HTTPClient {
         }
         else {
             resp << "HTTP/1.0 " << status << "\n";
-            guard(fstat(filefd, &fileStat), "fstat error");
             resp << "Content-length: " << size_t(fileStat.st_size) << " \n";
         }
 
@@ -176,6 +178,8 @@ class HTTPClient {
     }
 
     int sendFile(int filefd, const struct stat& fileStat) {
+        if (!S_ISREG(fileStat.st_mode))
+            return -1;
         if (filefd >= 0) {
             off_t fileOff = 0;
             size_t byteSent = 0, totalLeft = (fileStat.st_size);
