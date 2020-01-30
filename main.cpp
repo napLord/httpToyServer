@@ -1,6 +1,8 @@
 #include "server.h"
 #include "threadpool.h"
 
+const int THREAD_NUMBER = 5; // number of threads in threadpool at start
+
 void parseArguments(int argc, char** argv, char*& h, char*& p, char*& d) {
     int rez = 0;
     while ((rez = getopt(argc, argv, "p:h:d:")) != -1) {
@@ -31,14 +33,13 @@ int main(int argc, char** argv) {
 
     NetworkManager manager(h, p);
 
-    ThreadPool pool(2);
+    ThreadPool pool(THREAD_NUMBER);
 
     while (true) {
         auto client = manager.waitClient();
 
         auto serveFunc = [cli = std::move(client)]() mutable {
             int ret = cli.getRequest();
-            std::cout << ret << std::endl;
             if (ret >= 0) cli.giveResponse();
         };
 

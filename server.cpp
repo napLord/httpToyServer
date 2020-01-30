@@ -2,7 +2,7 @@
 #include "picohttp/picohttpparser.h"
 
 static int BACKLOG =  32;          //  max clients in line to connect
-static int USER_TIMEOUT = 30000;  //  how long we can wait for users tcp responses
+static int USER_TIMEOUT = 30000;  //  how long we can wait for users tcp responses (milliseconds)
 static int CLIENT_BUFFER_SIZE = 64;  //  starting buffer size for client request
 static int MAX_CLIENT_HEADERS_COUNT = 30;  //  maximum amount of headers request can have
 
@@ -93,9 +93,7 @@ int HTTPClient::getRequest() {
         }
 
         if (ofs == buff.size()) {
-            std::cerr << "buff resize when reading headers  prev:" << buff.size() << std::endl;
             buff.resize(buff.size() * 2);
-            std::cerr << "  next: " << buff.size() << std::endl;
         }
 
         if (parseRet > 0) {  // read all the headers, but possibly not full body
@@ -130,10 +128,6 @@ void HTTPClient::giveResponse() const {
     }
 
     std::string_view met(buff.data() + methodOfs, methodLen);
-    std::string_view pt(buff.data() + pathOfs, pathLen);
-
-    std::cout << "method is " <<  met << std::endl;
-    std::cout << "path is " <<  pt << std::endl;
 
     if (met == "GET") {
         httpGET();
@@ -143,7 +137,6 @@ void HTTPClient::giveResponse() const {
         response.addStatus(405, "method is not allowed");
         response.addHeader("Content-Length", "0");
         sendStr(response.str());
-        return;
     }
 }
 
@@ -301,7 +294,6 @@ int HTTPClient::readToTheEnd(size_t bodyStart) {
             if (ofs == buff.size()) {
                 buff.resize(buff.size() + bodyUnreadBytes);
                 std::cerr << "request is too big" << std::endl;
-                //return -1;
             }
         }
     }

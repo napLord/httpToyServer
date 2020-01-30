@@ -58,9 +58,7 @@ void ThreadPool::workerFunc(int num) {
         }
         
         std::cout << "thread #" << num << " is starting working" << std::endl;
-
         taskToDo();
-
         std::cout << "thread #" << num << " is ending working" << std::endl;
     }
 }
