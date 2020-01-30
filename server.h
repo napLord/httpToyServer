@@ -1,3 +1,4 @@
+#pragma once
 #include "picohttpparser.h"
 
 #include <asm-generic/errno-base.h>
@@ -64,10 +65,10 @@ class HTTPClient {
 
     std::vector<char> buff;
     std::vector<phr_header> headers;
-    const char *method, *path;
+    //const char *method, *path;
     size_t buflen = 0, ofs = 0, methodLen = 0, pathLen = 0, headersCnt = 0,
            bodyStart = 0;
-    int lastofs = 0, version;
+    int lastofs = 0, version, methodOfs, pathOfs;
 };
 
 class NetworkManager {
@@ -117,19 +118,3 @@ class HTTPClient::TopResponsePart {
     std::string reasonPhrase = "OK";
     int status = 200;
 };
-
-inline int errGuard(int n, const char* msg, bool throwError = 0) {
-    if (n < 0) {
-        perror(msg);
-        if (throwError) throw std::logic_error(strerror(errno));
-    }
-
-    return n;
-}
-
-int setUserTimeOut(int fd, int millisecs) {
-    return errGuard(
-        setsockopt(fd, SOL_TCP, TCP_USER_TIMEOUT, &millisecs, sizeof(int)),
-        "setsockoput setusertimeout");
-}
-

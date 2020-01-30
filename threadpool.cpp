@@ -2,7 +2,6 @@
 
 ThreadPool::ThreadPool(int threadNumbers) { addWorkers(threadNumbers); }
 
-
 void ThreadPool::restart(int threadNumbers) {
     abortWaitPendingTasks();
 
@@ -67,7 +66,8 @@ void ThreadPool::workerFunc(int num) {
 }
 
 void ThreadPool::addWorkers(int threadNumbers) {
-    for (int i = 0; i < threadNumbers; ++i) {
+    int workersCnt = workers.size();
+    for (int i = workersCnt + 1; i <= workersCnt + threadNumbers; ++i) {
         auto thr = std::thread(&ThreadPool::workerFunc, this, i);
         workers.push_back(move(thr));
     }

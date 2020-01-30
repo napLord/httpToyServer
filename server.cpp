@@ -1,10 +1,25 @@
 #include "server.h"
-#include "threadpool.h"
+#include "picohttp/picohttpparser.h"
 
 static int BACKLOG =  32;          //  max clients in line to connect
 static int USER_TIMEOUT = 30000;  //  how long we can wait for users tcp responses
-static int CLIENT_BUFFER_SIZE = 40000;  //  starting buffer size for client request
-static int MAX_CLIENT_HEADERS_COUNT = 40000;  //  maximum amount of headers request can have
+static int CLIENT_BUFFER_SIZE = 64;  //  starting buffer size for client request
+static int MAX_CLIENT_HEADERS_COUNT = 30;  //  maximum amount of headers request can have
+
+inline int errGuard(int n, const char* msg, bool throwError = 0) {
+    if (n < 0) {
+        perror(msg);
+        if (throwError) throw std::logic_error(strerror(errno));
+    }
+
+    return n;
+}
+
+int setUserTimeOut1(int fd, int millisecs) {
+    return errGuard(
+        setsockopt(fd, SOL_TCP, TCP_USER_TIMEOUT, &millisecs, sizeof(int)),
+        "setsockoput setusertimeout");
+}
 
 HTTPClient::HTTPClient(int clientSocket, sockaddr_in clientAdress,
                        socklen_t adressLength)
@@ -15,7 +30,7 @@ HTTPClient::HTTPClient(int clientSocket, sockaddr_in clientAdress,
       headers(MAX_CLIENT_HEADERS_COUNT) {
     std::cout << "got connection from " << inet_ntoa(clientAdr.sin_addr)
               << std::endl;
-    setUserTimeOut(clientSocket, USER_TIMEOUT);
+    setUserTimeOut1(clientSocket, USER_TIMEOUT);
 }
 
 HTTPClient::HTTPClient(HTTPClient&& other) { *this = std::move(other); }
@@ -23,8 +38,8 @@ HTTPClient::HTTPClient(HTTPClient&& other) { *this = std::move(other); }
 HTTPClient& HTTPClient::operator=(HTTPClient&& other) {
     buff = std::move(other.buff);
     headers = std::move(other.headers);
-    method = other.method;
-    path = other.method;
+    methodOfs = other.methodOfs;
+    pathOfs = other.pathOfs;
     buflen = other.buflen;
     ofs = other.ofs;
     methodLen = other.methodLen;
@@ -42,6 +57,7 @@ HTTPClient& HTTPClient::operator=(HTTPClient&& other) {
 
 int HTTPClient::getRequest() {
     std::cout << "getreq" << std::endl;
+    const char *method = nullptr, *path = nullptr;
     while (true) {
         int len;
         while ((len = recv(cliSock, &buff[ofs], buff.size() - ofs,
@@ -49,6 +65,7 @@ int HTTPClient::getRequest() {
                errno == EINTR) {
             continue;
         }
+        std::cout << "len " << len << std::endl;
 
         if (len == 0) {
             std::cout << "cient disconnected" << std::endl;
@@ -64,14 +81,21 @@ int HTTPClient::getRequest() {
 
         int parseRet;
         headersCnt = headers.size();
-        std::cout << "headerscnt " << headersCnt << std::endl;
         parseRet = phr_parse_request(buff.data(), ofs, &method, &methodLen,
                                      &path, &pathLen, &version, headers.data(),
                                      &headersCnt, lastofs);
+        if (method) { 
+            methodOfs = method - buff.data(); // set offset for where is http method starts
+        }
 
-        if (ofs == sizeof(buff)) {
-            std::cerr << "request is too big for inner buffer" << std::endl;
-            return -1;
+        if (path) { 
+            pathOfs = path - buff.data(); // set offset for where is http path starts
+        }
+
+        if (ofs == buff.size()) {
+            std::cerr << "buff resize when reading headers  prev:" << buff.size() << std::endl;
+            buff.resize(buff.size() * 2);
+            std::cerr << "  next: " << buff.size() << std::endl;
         }
 
         if (parseRet > 0) {  // read all the headers, but possibly not full body
@@ -85,7 +109,6 @@ int HTTPClient::getRequest() {
 
         if (parseRet == -1) {  // error
             std::cout << "parseError" << std::endl;
-            std::cout << buff.data() << std::endl;
             return -1;
         }
     }
@@ -106,7 +129,11 @@ void HTTPClient::giveResponse() const {
         return;
     }
 
-    std::string_view met(method, methodLen);
+    std::string_view met(buff.data() + methodOfs, methodLen);
+    std::string_view pt(buff.data() + pathOfs, pathLen);
+
+    std::cout << "method is " <<  met << std::endl;
+    std::cout << "path is " <<  pt << std::endl;
 
     if (met == "GET") {
         httpGET();
@@ -126,7 +153,7 @@ void HTTPClient::httpGET() const {
     struct stat fileStat;
     TopResponsePart response;
 
-    std::string pathBuf(path, pathLen);
+    std::string pathBuf(buff.data() + pathOfs, pathLen);
 
     int filefd;
     errGuard(filefd = open(pathBuf.c_str(), O_RDWR), "open Error");
@@ -151,7 +178,7 @@ void HTTPClient::httpGET() const {
 void HTTPClient::httpPOST() const {
     TopResponsePart response;
     int filefd;
-    std::string pathBuf(path, pathLen);
+    std::string pathBuf(buff.data() + pathOfs, pathLen);
     errGuard(filefd = open(pathBuf.c_str(), O_WRONLY | O_CREAT | O_EXCL, 0666),
              "httpPost open error");
 
@@ -186,7 +213,6 @@ void HTTPClient::httpPOST() const {
         response.addStatus(500, "internal server error");
     } else {
         response.addStatus(201, "page created successfuly");
-        response.addStatus(201, "page created successfuly");
         response.addHeader("Location", pathBuf);
     }
 
@@ -198,14 +224,22 @@ void HTTPClient::httpPOST() const {
 
 int HTTPClient::sendStr(std::string msg) const {
     int sendCode;
-    while (errGuard(
-               sendCode = send(cliSock, msg.c_str(), msg.size(), MSG_NOSIGNAL),
-               "senderror") == -1 &&
-           errno == EINTR) {
-        continue;
+    int needToSend = msg.size(), alreadySent = 0;
+
+    while (needToSend > 0) {
+        while (errGuard( sendCode = send(cliSock, msg.c_str() + alreadySent, msg.size() - alreadySent , MSG_NOSIGNAL),
+                   "senderror") == -1 && errno == EINTR) {
+            continue;
+        }
+        if (sendCode == -1) {
+            return -1;
+        } else {
+            needToSend -= sendCode;
+            alreadySent += sendCode;
+        }
     }
 
-    return sendCode;
+    return alreadySent;
 }
 
 int HTTPClient::sendFile(int filefd, const struct stat& fileStat) const {
@@ -265,8 +299,9 @@ int HTTPClient::readToTheEnd(size_t bodyStart) {
             bodyUnreadBytes -= len;
 
             if (ofs == buff.size()) {
+                buff.resize(buff.size() + bodyUnreadBytes);
                 std::cerr << "request is too big" << std::endl;
-                return -1;
+                //return -1;
             }
         }
     }
@@ -333,51 +368,4 @@ HTTPClient NetworkManager::waitClient() const {
 NetworkManager::~NetworkManager() {
     freeaddrinfo(myAdr);
     close(mSock);
-}
-
-void parseArguments(int argc, char** argv, char*& h, char*& p, char*& d) {
-    int rez = 0;
-    while ((rez = getopt(argc, argv, "p:h:d:")) != -1) {
-        switch (rez) {
-            case 'h':
-                h = optarg;
-                break;
-            case 'p':
-                p = optarg;
-                break;
-            case 'd':
-                d = optarg;
-                break;
-        }
-    }
-}
-
-int main(int argc, char** argv) {
-    char *h = nullptr, *p = nullptr, *d = nullptr;
-    parseArguments(argc, argv, h, p, d);
-    if (h == nullptr || p == nullptr || d == nullptr) {
-        std::cerr << "usage: server -h <ip> -p <port> -d <directory>\n";
-        exit(1);
-    }
-
-    chroot(d);
-    // chdir???
-
-    NetworkManager manager(h, p);
-
-    ThreadPool pool(2);
-
-    while (true) {
-        auto client = manager.waitClient();
-
-        auto serveFunc = [cli = std::move(client)]() mutable {
-            int ret = cli.getRequest();
-            std::cout << ret << std::endl;
-            if (ret >= 0) cli.giveResponse();
-        };
-
-        pool.addTask(std::move(serveFunc));
-    }
-
-    return 0;
 }
