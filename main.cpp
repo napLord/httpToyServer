@@ -27,7 +27,7 @@ int main(int argc, char** argv) {
     }
 
     chroot(d);
-    chroot(d);
+    chdir(d);
 
     NetworkManager manager(h, p);
 
